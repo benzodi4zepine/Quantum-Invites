@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  quantum-invites:
+    build: .
+    container_name: quantum-invites
+    restart: unless-stopped
+    env_file:
+      - ./bot.env
+    volumes:
+      - ./app/config:/app/app/config
+    environment:
+      - TZ=Etc/UTC
