@@ -957,6 +957,15 @@ class app(commands.Cog):
         except Exception as e:
             print(e)
 
+    @quantum_commands.command(name="ping", description="Check if Quantum Invites is responding")
+    async def ping(self, interaction: discord.Interaction):
+        latency_ms = round(self.bot.latency * 1000, 2)
+        await embedinfo(
+            interaction.response,
+            f"{BRAND_BOT_NAME} is online! Latency: {latency_ms} ms",
+            ephemeral=True
+        )
+
     @app_commands.checks.has_permissions(administrator=True)
     @quantum_commands.command(name="setexpiry", description="Set subscription expiry for a member")
     async def setexpiry(self, interaction: discord.Interaction, member: discord.Member, days: app_commands.Range[int, 1, 3650] = None, expires_on: str = None):

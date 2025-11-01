@@ -38,6 +38,8 @@ This command lists the Quantum Invites database with service status and expiry d
 This command is used to add existing plex emails, jellyfin users, emby users and discord id to the DB.
 /quantum dbrm <position>
 This command is used to remove a record from the Db. Use /quantum dbls to determine record position. ex: /quantum dbrm 1
+/quantum ping
+Quick health check that confirms the bot is online and reports latency.
 /quantum setexpiry <@user> <optional: days> <optional: expires_on>
 Set or replace a member's subscription expiry (defaults to configured length if days is omitted).
 /quantum extendexpiry <@user> <days>
