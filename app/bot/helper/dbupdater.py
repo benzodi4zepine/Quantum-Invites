@@ -1,6 +1,6 @@
 import sqlite3
 
-CURRENT_VERSION = 'Membarr V1.1'
+CURRENT_VERSION = 'Membarr V1.3'
 
 table_history = {
     'Invitarr V1.0': [
@@ -13,6 +13,23 @@ table_history = {
         (1, 'discord_username', 'TEXT', 1, None, 0),
         (2, 'email', 'TEXT', 0, None, 0),
         (3, 'jellyfin_username', 'TEXT', 0, None, 0)
+    ],
+    'Membarr V1.2': [
+        (0, 'id', 'INTEGER', 1, None, 1),
+        (1, 'discord_username', 'TEXT', 1, None, 0),
+        (2, 'email', 'TEXT', 0, None, 0),
+        (3, 'jellyfin_username', 'TEXT', 0, None, 0),
+        (4, 'emby_username', 'TEXT', 0, None, 0)
+    ],
+    'Membarr V1.3': [
+        (0, 'id', 'INTEGER', 1, None, 1),
+        (1, 'discord_username', 'TEXT', 1, None, 0),
+        (2, 'email', 'TEXT', 0, None, 0),
+        (3, 'jellyfin_username', 'TEXT', 0, None, 0),
+        (4, 'emby_username', 'TEXT', 0, None, 0),
+        (5, 'subscription_expires_at', 'TEXT', 0, None, 0),
+        (6, 'subscription_last_reminder_at', 'TEXT', 0, None, 0),
+        (7, 'subscription_reminder_flags', 'TEXT', 0, None, 0)
     ]
 }
 
@@ -60,6 +77,31 @@ def update_table(conn, tablename):
         ''')
         conn.commit()
         version = 'Membarr V1.1'
+        return update_table(conn, tablename)
+
+    if version == 'Membarr V1.1':
+        print("Upgrading DB table from Membarr V1.1 to Membarr V1.2")
+        conn.execute(f'''
+        ALTER TABLE {tablename} ADD COLUMN emby_username TEXT;
+        ''')
+        conn.commit()
+        version = 'Membarr V1.2'
+        return update_table(conn, tablename)
+
+    if version == 'Membarr V1.2':
+        print("Upgrading DB table from Membarr V1.2 to Membarr V1.3")
+        conn.execute(f'''
+        ALTER TABLE {tablename} ADD COLUMN subscription_expires_at TEXT;
+        ''')
+        conn.execute(f'''
+        ALTER TABLE {tablename} ADD COLUMN subscription_last_reminder_at TEXT;
+        ''')
+        conn.execute(f'''
+        ALTER TABLE {tablename} ADD COLUMN subscription_reminder_flags TEXT;
+        ''')
+        conn.commit()
+        version = 'Membarr V1.3'
+        return update_table(conn, tablename)
 
     print('------')
     

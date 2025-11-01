@@ -1,15 +1,18 @@
 from pydoc import describe
 import discord
+import asyncio
 import os
+from typing import Optional
+
+from discord import app_commands
 from discord.ext import commands, tasks
 from discord.utils import get
 from discord.ui import Button, View, Select
-from discord import app_commands
-import asyncio
 import sys
-from app.bot.helper.confighelper import MEMBARR_VERSION, switch, Discord_bot_token, plex_roles, jellyfin_roles
+from app.bot.helper.confighelper import MEMBARR_VERSION, switch, Discord_bot_token, plex_roles, jellyfin_roles, emby_roles
 import app.bot.helper.confighelper as confighelper
 import app.bot.helper.jellyfinhelper as jelly
+import app.bot.helper.embyhelper as emby
 from app.bot.helper.message import *
 from requests import ConnectTimeout
 from plexapi.myplex import MyPlexAccount
@@ -69,8 +72,10 @@ async def getuser(interaction, server, type):
             return None
 
 
-plex_commands = app_commands.Group(name="plexsettings", description="Membarr Plex commands")
-jellyfin_commands = app_commands.Group(name="jellyfinsettings", description="Membarr Jellyfin commands")
+plex_commands = app_commands.Group(name="plexsettings", description="Quantum Streams Plex commands")
+jellyfin_commands = app_commands.Group(name="jellyfinsettings", description="Quantum Streams Jellyfin commands")
+emby_commands = app_commands.Group(name="embysettings", description="Quantum Streams Emby commands")
+subscription_commands = app_commands.Group(name="subscriptionsettings", description="Quantum Invites subscription settings")
 
 
 @plex_commands.command(name="addrole", description="Add a role to automatically add users to Plex")
@@ -99,7 +104,7 @@ async def plexroleremove(interaction: discord.Interaction, role: discord.Role):
         return
     plex_roles.remove(role.name)
     confighelper.change_config("plex_roles", ",".join(plex_roles))
-    await interaction.response.send_message(f"Membarr will stop auto-adding \"{role.name}\" to Plex", ephemeral=True)
+    await interaction.response.send_message(f"{confighelper.BRAND_BOT_NAME} will stop auto-adding \"{role.name}\" to Plex", ephemeral=True)
 
 
 @plex_commands.command(name="listroles", description="List all roles whose members will be automatically added to Plex")
@@ -183,7 +188,7 @@ async def jellyroleremove(interaction: discord.Interaction, role: discord.Role):
         return
     jellyfin_roles.remove(role.name)
     confighelper.change_config("jellyfin_roles", ",".join(jellyfin_roles))
-    await interaction.response.send_message(f"Membarr will stop auto-adding \"{role.name}\" to Jellyfin",
+    await interaction.response.send_message(f"{confighelper.BRAND_BOT_NAME} will stop auto-adding \"{role.name}\" to Jellyfin",
                                             ephemeral=True)
 
 
@@ -222,7 +227,7 @@ async def setupjelly(interaction: discord.Interaction, server_url: str, api_key:
             return
         else:
             await embederror(interaction.followup,
-                             "Unknown error occurred while connecting to Jellyfin. Check Membarr logs.")
+                             f"Unknown error occurred while connecting to Jellyfin. Check {confighelper.BRAND_BOT_NAME} logs.")
     except ConnectTimeout as e:
         await embederror(interaction.followup,
                          "Connection to server timed out. Check that Jellyfin is online and reachable.")
@@ -231,7 +236,7 @@ async def setupjelly(interaction: discord.Interaction, server_url: str, api_key:
         print("Exception while testing Jellyfin connection")
         print(type(e).__name__)
         print(e)
-        await embederror(interaction.followup, "Unknown exception while connecting to Jellyfin. Check Membarr logs")
+        await embederror(interaction.followup, f"Unknown exception while connecting to Jellyfin. Check {confighelper.BRAND_BOT_NAME} logs")
         return
 
     confighelper.change_config("jellyfin_server_url", str(server_url))
@@ -340,7 +345,277 @@ async def disablejellyfin(interaction: discord.Interaction):
     print("Bot has restarted. Give it a few seconds.")
 
 
+@emby_commands.command(name="addrole", description="Add a role to automatically add users to Emby")
+@app_commands.checks.has_permissions(administrator=True)
+async def embyroleadd(interaction: discord.Interaction, role: discord.Role):
+    if len(emby_roles) <= maxroles:
+        if role.name in emby_roles:
+            await embederror(interaction.response, f"Emby role \"{role.name}\" already added.")
+            return
+
+        emby_roles.append(role.name)
+        confighelper.change_config("emby_roles", ",".join(emby_roles))
+        await interaction.response.send_message("Updated Emby roles. Bot is restarting. Please wait.",
+                                                ephemeral=True)
+        print("Emby roles updated. Restarting bot.")
+        await reload()
+        print("Bot has been restarted. Give it a few seconds.")
+
+
+@emby_commands.command(name="removerole", description="Stop adding users with a role to Emby")
+@app_commands.checks.has_permissions(administrator=True)
+async def embyroleremove(interaction: discord.Interaction, role: discord.Role):
+    if role.name not in emby_roles:
+        await embederror(interaction.response, f"\"{role.name}\" is currently not an Emby role.")
+        return
+    emby_roles.remove(role.name)
+    confighelper.change_config("emby_roles", ",".join(emby_roles))
+    await interaction.response.send_message(f"{confighelper.BRAND_BOT_NAME} will stop auto-adding \"{role.name}\" to Emby",
+                                            ephemeral=True)
+
+
+@emby_commands.command(name="listroles",
+                       description="List all roles whose members will be automatically added to Emby")
+@app_commands.checks.has_permissions(administrator=True)
+async def embyrolels(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        "The following roles are being automatically added to Emby:\n" +
+        ", ".join(emby_roles), ephemeral=True
+    )
+
+
+@emby_commands.command(name="setup", description="Setup Emby integration")
+@app_commands.checks.has_permissions(administrator=True)
+async def setupemby(interaction: discord.Interaction, server_url: str, api_key: str, external_url: str = None):
+    await interaction.response.defer()
+    server_url = server_url.rstrip('/')
+
+    try:
+        server_status = emby.get_status(server_url, api_key)
+        if server_status == 200:
+            pass
+        elif server_status == 401:
+            await embederror(interaction.followup, "API key provided is invalid")
+            return
+        elif server_status == 403:
+            await embederror(interaction.followup, "API key provided does not have permissions")
+            return
+        elif server_status == 404:
+            await embederror(interaction.followup, "Server endpoint provided was not found")
+            return
+        else:
+            await embederror(interaction.followup,
+                             f"Unknown error occurred while connecting to Emby. Check {confighelper.BRAND_BOT_NAME} logs.")
+            return
+    except ConnectTimeout:
+        await embederror(interaction.followup,
+                         "Connection to server timed out. Check that Emby is online and reachable.")
+        return
+    except Exception as e:
+        print("Exception while testing Emby connection")
+        print(type(e).__name__)
+        print(e)
+        await embederror(interaction.followup, f"Unknown exception while connecting to Emby. Check {confighelper.BRAND_BOT_NAME} logs")
+        return
+
+    confighelper.change_config("emby_server_url", str(server_url))
+    confighelper.change_config("emby_api_key", str(api_key))
+    if external_url is not None:
+        confighelper.change_config("emby_external_url", str(external_url))
+    else:
+        confighelper.change_config("emby_external_url", str(server_url))
+
+    print("Emby server URL and API key updated. Restarting bot.")
+    await interaction.followup.send("Emby server URL and API key updated. Restarting bot.", ephemeral=True)
+    await reload()
+    print("Bot has been restarted. Give it a few seconds.")
+
+
+@emby_commands.command(name="setuplibs", description="Setup libraries that new users can access")
+@app_commands.checks.has_permissions(administrator=True)
+async def setupembylibs(interaction: discord.Interaction, libraries: str):
+    if not libraries:
+        await embederror(interaction.response, "libraries string is empty.")
+        return
+
+    libraries = ",".join(list(map(lambda lib: lib.strip(), libraries.split(","))))
+    confighelper.change_config("emby_libs", str(libraries))
+    print("Emby libraries updated. Restarting bot. Please wait.")
+    await interaction.response.send_message(
+        "Emby libraries updated. Please wait a few seconds for bot to restart.", ephemeral=True)
+    await reload()
+    print("Bot has been restarted. Give it a few seconds.")
+
+
+@emby_commands.command(name="enable", description="Enable adding users to Emby")
+@app_commands.checks.has_permissions(administrator=True)
+async def enableemby(interaction: discord.Interaction):
+    if confighelper.USE_EMBY:
+        await interaction.response.send_message("Emby already enabled.", ephemeral=True)
+        return
+    confighelper.change_config("emby_enabled", True)
+    print("Emby enabled, reloading server")
+    confighelper.USE_EMBY = True
+    await reload()
+    await interaction.response.send_message("Emby enabled. Restarting server. Give it a few seconds.",
+                                            ephemeral=True)
+    print("Bot has restarted. Give it a few seconds.")
+
+
+@emby_commands.command(name="disable", description="Disable adding users to Emby")
+@app_commands.checks.has_permissions(administrator=True)
+async def disableemby(interaction: discord.Interaction):
+    if not confighelper.USE_EMBY:
+        await interaction.response.send_message("Emby already disabled.", ephemeral=True)
+        return
+    confighelper.change_config("emby_enabled", False)
+    print("Emby disabled, reloading server")
+    confighelper.USE_EMBY = False
+    await reload()
+    await interaction.response.send_message("Emby disabled. Restarting server. Give it a few seconds.",
+                                            ephemeral=True)
+    print("Bot has restarted. Give it a few seconds.")
+
+
+@subscription_commands.command(name="setdefault", description="Set default subscription length in days")
+@app_commands.checks.has_permissions(administrator=True)
+async def subscriptionsetdefault(interaction: discord.Interaction, days: app_commands.Range[int, 0, 3650]):
+    confighelper.change_config("subscription_default_days", days)
+    confighelper.SUBSCRIPTION_DEFAULT_DAYS = days
+    await interaction.response.send_message(
+        f"Default subscription length set to {days} day(s).",
+        ephemeral=True
+    )
+
+
+@subscription_commands.command(name="setreminders", description="Set reminder offsets (comma separated days)")
+@app_commands.checks.has_permissions(administrator=True)
+async def subscriptionsetreminders(interaction: discord.Interaction, days: str):
+    try:
+        parsed = sorted({int(day.strip()) for day in days.split(',') if day.strip()}, reverse=True)
+    except ValueError:
+        await interaction.response.send_message("Invalid list. Provide comma separated integers, e.g. `7,3,1`.", ephemeral=True)
+        return
+    confighelper.change_config("subscription_reminder_days", ",".join(str(d) for d in parsed))
+    confighelper.SUBSCRIPTION_REMINDER_DAYS = parsed
+    await interaction.response.send_message(
+        f"Reminder schedule updated to: {', '.join(str(d) for d in parsed)} day(s) before expiry.",
+        ephemeral=True
+    )
+
+
+@subscription_commands.command(name="setgrace", description="Set grace period after expiry in days")
+@app_commands.checks.has_permissions(administrator=True)
+async def subscriptionsetgrace(interaction: discord.Interaction, days: app_commands.Range[int, 0, 30]):
+    confighelper.change_config("subscription_grace_days", days)
+    confighelper.SUBSCRIPTION_GRACE_DAYS = days
+    await interaction.response.send_message(
+        f"Grace period updated to {days} day(s).",
+        ephemeral=True
+    )
+
+
+@subscription_commands.command(name="setemailserver", description="Configure SMTP server for subscription emails")
+@app_commands.checks.has_permissions(administrator=True)
+async def subscriptionsetemailserver(
+    interaction: discord.Interaction,
+    host: str,
+    port: app_commands.Range[int, 1, 65535],
+    from_email: str,
+    use_tls: bool = True,
+):
+    confighelper.change_config("smtp_host", host)
+    confighelper.change_config("smtp_port", port)
+    confighelper.change_config("smtp_from_email", from_email)
+    confighelper.change_config("smtp_use_tls", use_tls)
+    confighelper.SMTP_HOST = host
+    confighelper.SMTP_PORT = port
+    confighelper.SMTP_FROM_EMAIL = from_email
+    confighelper.SMTP_USE_TLS = use_tls
+    await interaction.response.send_message(
+        f"SMTP server updated ({host}:{port}, TLS={'on' if use_tls else 'off'}).",
+        ephemeral=True
+    )
+
+
+@subscription_commands.command(name="setemailcredentials", description="Set SMTP credentials for subscription emails")
+@app_commands.checks.has_permissions(administrator=True)
+async def subscriptionsetemailcredentials(
+    interaction: discord.Interaction,
+    username: Optional[str] = None,
+    password: Optional[str] = None
+):
+    confighelper.change_config("smtp_username", username or "")
+    confighelper.SMTP_USERNAME = username or ""
+    if password is not None:
+        confighelper.change_config("smtp_password", password)
+        confighelper.SMTP_PASSWORD = password
+    await interaction.response.send_message(
+        "SMTP credentials updated.",
+        ephemeral=True
+    )
+
+
+@subscription_commands.command(name="setemailenabled", description="Enable or disable email reminders")
+@app_commands.checks.has_permissions(administrator=True)
+async def subscriptionsetemailenabled(interaction: discord.Interaction, enabled: bool):
+    confighelper.change_config("subscription_email_enabled", enabled)
+    confighelper.SUBSCRIPTION_EMAIL_ENABLED = enabled
+    await interaction.response.send_message(
+        f"Subscription email reminders {'enabled' if enabled else 'disabled'}.",
+        ephemeral=True
+    )
+
+
+@subscription_commands.command(name="setalertchannel", description="Set channel for subscription alerts")
+@app_commands.checks.has_permissions(administrator=True)
+async def subscriptionsetalert(interaction: discord.Interaction, channel: discord.TextChannel):
+    confighelper.change_config("subscription_alert_channel_id", channel.id)
+    confighelper.SUBSCRIPTION_ALERT_CHANNEL_ID = str(channel.id)
+    await interaction.response.send_message(
+        f"Alerts will now post in {channel.mention}.",
+        ephemeral=True
+    )
+
+
+@subscription_commands.command(name="clearalertchannel", description="Stop posting subscription alerts to a channel")
+@app_commands.checks.has_permissions(administrator=True)
+async def subscriptionclearalert(interaction: discord.Interaction):
+    confighelper.change_config("subscription_alert_channel_id", "")
+    confighelper.SUBSCRIPTION_ALERT_CHANNEL_ID = ""
+    await interaction.response.send_message(
+        "Subscription alert channel cleared. Alerts will be sent to the configured owner instead.",
+        ephemeral=True
+    )
+
+
+@subscription_commands.command(name="show", description="Show current subscription settings")
+@app_commands.checks.has_permissions(administrator=True)
+async def subscriptionshow(interaction: discord.Interaction):
+    reminders = ", ".join(str(day) for day in confighelper.SUBSCRIPTION_REMINDER_DAYS) if confighelper.SUBSCRIPTION_REMINDER_DAYS else "None"
+    channel_text = "None"
+    if confighelper.SUBSCRIPTION_ALERT_CHANNEL_ID:
+        channel_text = f"<#{confighelper.SUBSCRIPTION_ALERT_CHANNEL_ID}>"
+    email_status = "Enabled" if confighelper.SUBSCRIPTION_EMAIL_ENABLED else "Disabled"
+    smtp_host = confighelper.SMTP_HOST or "Not set"
+    smtp_from = confighelper.SMTP_FROM_EMAIL or "Not set"
+    tls_status = "on" if confighelper.SMTP_USE_TLS else "off"
+    message = (
+        f"Default length: {confighelper.SUBSCRIPTION_DEFAULT_DAYS} day(s)\n"
+        f"Reminder schedule: {reminders}\n"
+        f"Grace period: {confighelper.SUBSCRIPTION_GRACE_DAYS} day(s)\n"
+        f"Alert channel: {channel_text}\n"
+        f"Email reminders: {email_status}\n"
+        f"SMTP host: {smtp_host}\n"
+        f"SMTP from: {smtp_from}\n"
+        f"SMTP TLS: {tls_status}"
+    )
+    await interaction.response.send_message(message, ephemeral=True)
+
+
 bot.tree.add_command(plex_commands)
 bot.tree.add_command(jellyfin_commands)
+bot.tree.add_command(emby_commands)
+bot.tree.add_command(subscription_commands)
 
 bot.run(Discord_bot_token)
